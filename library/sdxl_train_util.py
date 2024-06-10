@@ -50,15 +50,17 @@ def load_target_model(args, accelerator, model_version: str, weight_dtype):
                 args.disable_mmap_load_safetensors,
             )
 
-            # work on low-ram device
-            if args.lowram:
-                text_encoder1.to(accelerator.device)
-                text_encoder2.to(accelerator.device)
-                unet.to(accelerator.device)
-                vae.to(accelerator.device)
+    # work on low-ram device
+    if args.lowram:
+        text_encoder1.to(accelerator.device)
+        text_encoder2.to(accelerator.device)
+        unet.to(accelerator.device)
+        vae.to(accelerator.device)
 
-            clean_memory_on_device(accelerator.device)
-        accelerator.wait_for_everyone()
+    clean_memory_on_device(accelerator.device)
+    logger.info(f"model loaded for process {accelerator.state.local_process_index} {accelerator.state.process_index} /{accelerator.state.num_processes}")
+    accelerator.wait_for_everyone()
+    logger.info(f"model loaded for all processes {accelerator.state.local_process_index} {accelerator.state.process_index} /{accelerator.state.num_processes}")
 
     return load_stable_diffusion_format, text_encoder1, text_encoder2, vae, unet, logit_scale, ckpt_info
 
