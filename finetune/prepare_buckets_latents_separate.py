@@ -15,6 +15,8 @@ from torchvision import transforms
 import library.model_util as model_util
 import library.train_util as train_util
 
+Image.MAX_IMAGE_PIXELS = None
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 IMAGE_TRANSFORMS = transforms.Compose(
@@ -174,7 +176,7 @@ def main(args):
     def process_batch(is_last):
         for bucket in bucket_manager.buckets:
             if (is_last and len(bucket) > 0) or len(bucket) >= args.batch_size:
-                train_util.cache_batch_latents(vae, True, bucket, args.flip_aug, False)
+                train_util.cache_batch_latents(vae, True, bucket, args.flip_aug, False, False)
                 bucket.clear()
 
     # 読み込みの高速化のためにDataLoaderを使うオプション
@@ -199,10 +201,10 @@ def main(args):
             continue
 
         img_tensor, image_path = data_entry[0]
-        if img_tensor is not None:
-            image = transforms.functional.to_pil_image(img_tensor)
-        else:
-            try:
+        try:
+            if img_tensor is not None:
+                image = transforms.functional.to_pil_image(img_tensor)
+            else:
                 image = Image.open(image_path)
                 if image.mode != "RGB":
                     # if RGBA, paste at white background
@@ -212,9 +214,9 @@ def main(args):
                         image = white
                     else:
                         image = image.convert("RGB")
-            except Exception as e:
-                print(f"Could not load image path / 画像を読み込めません: {image_path}, error: {e}")
-                continue
+        except Exception as e:
+            print(f"Could not load image path / 画像を読み込めません: {image_path}, error: {e}")
+            continue
 
         image_key = image_path if args.full_path else os.path.splitext(os.path.basename(image_path))[0]
         if image_key not in metadata:
@@ -245,7 +247,7 @@ def main(args):
         # 既に存在するファイルがあればshape等を確認して同じならskipする
         npz_file_name = get_npz_filename(args.train_data_dir, image_key, args.full_path, args.recursive)
         if args.skip_existing:
-            if train_util.is_disk_cached_latents_is_expected(reso, npz_file_name, args.flip_aug):
+            if train_util.is_disk_cached_latents_is_expected(reso, npz_file_name, args.flip_aug, False):
                 continue
 
         # バッチへ追加
