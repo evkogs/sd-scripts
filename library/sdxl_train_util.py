@@ -28,6 +28,7 @@ TOKENIZER2_PATH = "laion/CLIP-ViT-bigG-14-laion2B-39B-b160k"
 
 def load_target_model(args, accelerator, model_version: str, weight_dtype):
     model_dtype = match_mixed_precision(args, weight_dtype)  # prepare fp16/bf16
+
     for pi in range(accelerator.state.num_processes):
         if pi == accelerator.state.local_process_index:
             logger.info(f"loading model for process {accelerator.state.local_process_index}/{accelerator.state.num_processes}")
@@ -46,7 +47,8 @@ def load_target_model(args, accelerator, model_version: str, weight_dtype):
                 model_version,
                 weight_dtype,
                 accelerator.device if args.lowram else "cpu",
-                model_dtype,
+                # model_dtype,
+                weight_dtype,
                 args.disable_mmap_load_safetensors,
             )
 
@@ -287,7 +289,7 @@ def save_sd_model_on_epoch_end_or_stepwise(
     logit_scale,
     ckpt_info,
 ):
-    def sd_saver(ckpt_file, epoch_no, global_step):
+    def sd_saver(ckpt_file, epoch_no, global_step, accelerator=None):
         sai_metadata = train_util.get_sai_model_spec(None, args, True, False, False, is_stable_diffusion_ckpt=True)
         sdxl_model_util.save_stable_diffusion_checkpoint(
             ckpt_file,
@@ -301,6 +303,7 @@ def save_sd_model_on_epoch_end_or_stepwise(
             logit_scale,
             sai_metadata,
             save_dtype,
+            accelerator=accelerator
         )
 
     def diffusers_saver(out_dir):

@@ -3240,6 +3240,14 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         choices=["no", "fp16", "bf16"],
         help="use mixed precision / 混合精度を使う場合、その精度",
     )
+    parser.add_argument(
+        "--weight_dtype",
+        type=str,
+        default="fp32",
+        choices=["fp32", "fp16", "bf16"],
+        help="use mixed precision / 混合精度を使う場合、その精度",
+    )
+    parser.add_argument("--fp32_weights", action="store_true", help="fp32 weights")
     parser.add_argument("--full_fp16", action="store_true", help="fp16 training including gradients / 勾配も含めてfp16で学習する")
     parser.add_argument(
         "--full_bf16", action="store_true", help="bf16 training including gradients / 勾配も含めてbf16で学習する"
@@ -4009,7 +4017,7 @@ def resume_from_local_or_hf_if_specified(accelerator, args):
     accelerator.load_state(dirname)
 
 
-def get_optimizer(args, trainable_params):
+def get_optimizer(args, trainable_params, model=None):
     # "Optimizer to use: AdamW, AdamW8bit, Lion, SGDNesterov, SGDNesterov8bit, PagedAdamW, PagedAdamW8bit, PagedAdamW32bit, Lion8bit, PagedLion8bit, DAdaptation(DAdaptAdamPreprint), DAdaptAdaGrad, DAdaptAdam, DAdaptAdan, DAdaptAdanIP, DAdaptLion, DAdaptSGD, Adafactor"
 
     optimizer_type = args.optimizer_type
@@ -4282,6 +4290,28 @@ def get_optimizer(args, trainable_params):
         optimizer_class = torch.optim.AdamW
         optimizer = optimizer_class(trainable_params, lr=lr, **optimizer_kwargs)
 
+    elif optimizer_type == "AdamMini".lower():
+        logger.info(f"use AdamMini optimizer | {optimizer_kwargs}")
+        try:
+            import library.adam_mini as adam_mini
+            optimizer_class = adam_mini.Adam_mini
+        except ImportError:
+            raise ImportError("No adam-mini / adam-mini がインストールされていないようです")
+
+        named_params = [(name, param) for name, param in model.named_parameters() if param.requires_grad]
+
+        optimizer = optimizer_class(named_params, lr=lr, **optimizer_kwargs)
+
+        # Add embedding names
+        optimizer.embd_names.add("time_embed")
+        optimizer.embd_names.add("label_emb")
+        optimizer.embd_names.add("out")
+
+        # Add query, key, value projection names
+        optimizer.wqk_names.add("to_q")
+        optimizer.wqk_names.add("to_k")
+
+
     if optimizer is None:
         # 任意のoptimizerを使う
         optimizer_type = args.optimizer_type  # lowerでないやつ（微妙）
@@ -4512,9 +4542,9 @@ def prepare_accelerator(args: argparse.Namespace):
 
 def prepare_dtype(args: argparse.Namespace):
     weight_dtype = torch.float32
-    if args.mixed_precision == "fp16":
+    if args.weight_dtype == "fp16":
         weight_dtype = torch.float16
-    elif args.mixed_precision == "bf16":
+    elif args.weight_dtype == "bf16":
         weight_dtype = torch.bfloat16
 
     save_dtype = None
@@ -4541,7 +4571,7 @@ def _load_target_model(args: argparse.Namespace, weight_dtype, device="cpu", une
         # Diffusers model is loaded to CPU
         logger.info(f"load Diffusers pretrained models: {name_or_path}")
         try:
-            pipe = StableDiffusionPipeline.from_pretrained(name_or_path, tokenizer=None, safety_checker=None)
+            pipe = StableDiffusionPipeline.from_pretrained(name_or_path, tokenizer=None, safety_checker=None, torch_dtype=weight_dtype)
         except EnvironmentError as ex:
             logger.error(
                 f"model is not found as a file or in Hugging Face, perhaps file name is wrong? / 指定したモデル名のファイル、またはHugging Faceのモデルが見つかりません。ファイル名が誤っているかもしれません: {name_or_path}"
@@ -4887,7 +4917,7 @@ def save_sd_model_on_epoch_end_or_stepwise_common(
             ckpt_file = os.path.join(args.output_dir, ckpt_name)
             logger.info("")
             logger.info(f"saving checkpoint: {ckpt_file}")
-            sd_saver(ckpt_file, epoch_no, global_step)
+            sd_saver(ckpt_file, epoch_no, global_step, accelerator=accelerator)
 
             if args.huggingface_repo_id is not None:
                 huggingface_util.upload(args, ckpt_file, "/" + ckpt_name)
@@ -5336,7 +5366,8 @@ def sample_images_common(
     vae.to(distributed_state.device)  # distributed_state.device is same as accelerator.device
 
     # unwrap unet and text_encoder(s)
-    unet = accelerator.unwrap_model(unet)
+    # unet = accelerator.unwrap_model(unet)
+    
     if isinstance(text_encoder, (list, tuple)):
         text_encoder = [accelerator.unwrap_model(te) for te in text_encoder]
     else:

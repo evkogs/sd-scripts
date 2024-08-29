@@ -1,11 +1,11 @@
 #!/bin/bash
 
-TRAIN_DATA_DIR=/mnt/s3fs_cache/training_data_highres
+TRAIN_DATA_DIR=/mnt/s3fs_cache/training_data_uncool
 
 
 TOTAL_SPLIT=32 # Total number of processes
 OFFSET=0
-CUDA_DEVICES_NUM=8 # Number of GPUs
+CUDA_DEVICES_NUM=4 # Number of GPUs
 PYTHON=python
 MODEL_PATH=stabilityai/stable-diffusion-xl-base-1.0
 

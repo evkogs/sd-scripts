@@ -44,7 +44,7 @@ CONTEXT_DIM: int = 2048
 MODEL_CHANNELS: int = 320
 TIME_EMBED_DIM = 320 * 4
 
-USE_REENTRANT = True
+USE_REENTRANT = False
 
 # region memory efficient attention
 
@@ -819,7 +819,7 @@ class Upsample2D(nn.Module):
 
 
 class SdxlUNet2DConditionModel(nn.Module):
-    _supports_gradient_checkpointing = True
+    _supports_gradient_checkpointing = True 
 
     def __init__(
         self,
@@ -1071,47 +1071,106 @@ class SdxlUNet2DConditionModel(nn.Module):
 
     # endregion
 
-    def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
-        # broadcast timesteps to batch dimension
-        timesteps = timesteps.expand(x.shape[0])
+    # def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
+    #     # broadcast timesteps to batch dimension
+    #     timesteps = timesteps.expand(x.shape[0])
 
-        hs = []
-        t_emb = get_timestep_embedding(timesteps, self.model_channels, downscale_freq_shift=0)  # , repeat_only=False)
+    #     hs = []
+    #     t_emb = get_timestep_embedding(timesteps, self.model_channels, downscale_freq_shift=0)  # , repeat_only=False)
+    #     t_emb = t_emb.to(x.dtype)
+    #     emb = self.time_embed(t_emb)
+
+    #     assert x.shape[0] == y.shape[0], f"batch size mismatch: {x.shape[0]} != {y.shape[0]}"
+    #     assert x.dtype == y.dtype, f"dtype mismatch: {x.dtype} != {y.dtype}"
+    #     # assert x.dtype == self.dtype
+    #     emb = emb + self.label_emb(y)
+
+    #     def call_module(module, h, emb, context):
+    #         x = h
+    #         for layer in module:
+    #             # logger.info(layer.__class__.__name__, x.dtype, emb.dtype, context.dtype if context is not None else None)
+    #             if isinstance(layer, ResnetBlock2D):
+    #                 x = layer(x, emb)
+    #             elif isinstance(layer, Transformer2DModel):
+    #                 x = layer(x, context)
+    #             else:
+    #                 x = layer(x)
+    #         return x
+
+    #     # h = x.type(self.dtype)
+    #     h = x
+
+    #     for module in self.input_blocks:
+    #         h = call_module(module, h, emb, context)
+    #         hs.append(h)
+
+    #     h = call_module(self.middle_block, h, emb, context)
+
+    #     for module in self.output_blocks:
+    #         h = torch.cat([h, hs.pop()], dim=1)
+    #         h = call_module(module, h, emb, context)
+
+    #     h = h.type(x.dtype)
+    #     h = call_module(self.out, h, emb, context)
+
+    #     return h
+
+    def forward(self, x, timesteps, context, y):
+        timesteps = timesteps.expand(x.shape[0])
+        t_emb = get_timestep_embedding(timesteps, self.model_channels, downscale_freq_shift=0)
         t_emb = t_emb.to(x.dtype)
         emb = self.time_embed(t_emb)
-
-        assert x.shape[0] == y.shape[0], f"batch size mismatch: {x.shape[0]} != {y.shape[0]}"
-        assert x.dtype == y.dtype, f"dtype mismatch: {x.dtype} != {y.dtype}"
-        # assert x.dtype == self.dtype
         emb = emb + self.label_emb(y)
 
-        def call_module(module, h, emb, context):
-            x = h
-            for layer in module:
-                # logger.info(layer.__class__.__name__, x.dtype, emb.dtype, context.dtype if context is not None else None)
-                if isinstance(layer, ResnetBlock2D):
-                    x = layer(x, emb)
-                elif isinstance(layer, Transformer2DModel):
-                    x = layer(x, context)
-                else:
-                    x = layer(x)
-            return x
 
-        # h = x.type(self.dtype)
-        h = x
+        h0 = self.input_blocks[0](x)
+        h1 = self.input_blocks[1][0](h0, emb)
+        h2 = self.input_blocks[2][0](h1, emb)
+        h3 = self.input_blocks[3](h2)
+        h4 = self.input_blocks[4][0](h3, emb)
+        h4 = self.input_blocks[4][1](h4, context)
+        h5 = self.input_blocks[5][0](h4, emb)
+        h5 = self.input_blocks[5][1](h5, context)
+        h6 = self.input_blocks[6](h5)
+        h7 = self.input_blocks[7][0](h6, emb)
+        h7 = self.input_blocks[7][1](h7, context)
+        h8 = self.input_blocks[8][0](h7, emb)
+        h8 = self.input_blocks[8][1](h8, context)
 
-        for module in self.input_blocks:
-            h = call_module(module, h, emb, context)
-            hs.append(h)
+        hm = self.middle_block[0](h8, emb)
+        hm = self.middle_block[1](hm, context)
+        hm = self.middle_block[2](hm, emb)
 
-        h = call_module(self.middle_block, h, emb, context)
+        h = torch.cat([hm, h8], dim=1)
+        h = self.output_blocks[0][0](h, emb)
+        h = self.output_blocks[0][1](h, context)
+        h = torch.cat([h, h7], dim=1)
+        h = self.output_blocks[1][0](h, emb)
+        h = self.output_blocks[1][1](h, context)
+        h = torch.cat([h, h6], dim=1)
+        h = self.output_blocks[2][0](h, emb)
+        h = self.output_blocks[2][1](h, context)
+        h = self.output_blocks[2][2](h)
+        h = torch.cat([h, h5], dim=1)
+        h = self.output_blocks[3][0](h, emb)
+        h = self.output_blocks[3][1](h, context)
+        h = torch.cat([h, h4], dim=1)
+        h = self.output_blocks[4][0](h, emb)
+        h = self.output_blocks[4][1](h, context)
+        h = torch.cat([h, h3], dim=1)
+        h = self.output_blocks[5][0](h, emb)
+        h = self.output_blocks[5][1](h, context)
+        h = self.output_blocks[5][2](h)
+        h = torch.cat([h, h2], dim=1)
+        h = self.output_blocks[6][0](h, emb)
+        h = torch.cat([h, h1], dim=1)
+        h = self.output_blocks[7][0](h, emb)
+        h = torch.cat([h, h0], dim=1)
+        h = self.output_blocks[8][0](h, emb)
 
-        for module in self.output_blocks:
-            h = torch.cat([h, hs.pop()], dim=1)
-            h = call_module(module, h, emb, context)
-
-        h = h.type(x.dtype)
-        h = call_module(self.out, h, emb, context)
+        h = self.out[0](h)
+        h = self.out[1](h)
+        h = self.out[2](h)
 
         return h
 

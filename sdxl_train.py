@@ -45,6 +45,12 @@ from library.custom_train_functions import (
 )
 from library.sdxl_original_unet import SdxlUNet2DConditionModel
 
+from accelerate.utils.fsdp_utils import save_fsdp_model, load_fsdp_model, load_fsdp_model, load_fsdp_optimizer
+
+
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 
 UNET_NUM_BLOCKS_FOR_BLOCK_LR = 23
 
@@ -398,14 +404,14 @@ def train(args):
         # prepare optimizers for each group
         optimizers = []
         for group in grouped_params:
-            _, _, optimizer = train_util.get_optimizer(args, trainable_params=[group])
+            _, _, optimizer = train_util.get_optimizer(args, trainable_params=[group], model=unet)
             optimizers.append(optimizer)
         optimizer = optimizers[0]  # avoid error in the following code
 
         logger.info(f"using {len(optimizers)} optimizers for fused optimizer groups")
 
     else:
-        _, _, optimizer = train_util.get_optimizer(args, trainable_params=params_to_optimize)
+        _, _, optimizer = train_util.get_optimizer(args, trainable_params=params_to_optimize, model=unet)
 
     # dataloaderを準備する
     # DataLoaderのプロセス数：0 は persistent_workers が使えないので注意
@@ -462,6 +468,9 @@ def train(args):
         text_encoder1.text_model.encoder.layers[-1].requires_grad_(False)
         text_encoder1.text_model.final_layer_norm.requires_grad_(False)
 
+
+    assert unet.dtype == weight_dtype
+
     if args.deepspeed:
         ds_model = deepspeed_utils.prepare_deepspeed_model(
             args,
@@ -475,7 +484,7 @@ def train(args):
         )
         training_models = [ds_model]
 
-    else:
+    else:   
         # acceleratorがなんかよろしくやってくれるらしい
         if train_unet:
             unet = accelerator.prepare(unet)
@@ -504,6 +513,8 @@ def train(args):
 
     # resumeする
     train_util.resume_from_local_or_hf_if_specified(accelerator, args)
+
+    print(f"UNET dtype: {unet.dtype}")
 
     if args.fused_backward_pass:
         # use fused optimizer for backward pass: other optimizers will be supported in the future
@@ -618,7 +629,8 @@ def train(args):
             if args.fused_optimizer_groups:
                 optimizer_hooked_count = {i: 0 for i in range(len(optimizers))}  # reset counter for each step
 
-            with accelerator.accumulate(*training_models):
+            with accelerator.no_sync(*training_models):
+            # with accelerator.accumulate(*training_models):
                 if "latents" in batch and batch["latents"] is not None:
                     latents = batch["latents"].to(accelerator.device).to(dtype=weight_dtype)
                 else:
@@ -745,7 +757,11 @@ def train(args):
                         params_to_clip = []
                         for m in training_models:
                             params_to_clip.extend(m.parameters())
-                        accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                        grad_norm = accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                        
+                        # Log the gradient norm
+                        if args.logging_dir is not None:
+                            accelerator.log({"grad_norm": grad_norm.item()}, step=global_step)
 
                     optimizer.step()
                     lr_scheduler.step()
@@ -777,30 +793,35 @@ def train(args):
                 # 指定ステップごとにモデルを保存
                 if args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0:
                     accelerator.wait_for_everyone()
-                    if accelerator.is_main_process:
-                        src_path = src_stable_diffusion_ckpt if save_stable_diffusion_format else src_diffusers_model_path
-                        sdxl_train_util.save_sd_model_on_epoch_end_or_stepwise(
-                            args,
-                            False,
-                            accelerator,
-                            src_path,
-                            save_stable_diffusion_format,
-                            use_safetensors,
-                            save_dtype,
-                            epoch,
-                            num_train_epochs,
-                            global_step,
-                            accelerator.unwrap_model(text_encoder1),
-                            accelerator.unwrap_model(text_encoder2),
-                            accelerator.unwrap_model(unet),
-                            vae,
-                            logit_scale,
-                            ckpt_info,
-                        )
+                    src_path = src_stable_diffusion_ckpt if save_stable_diffusion_format else src_diffusers_model_path
+                        # sdxl_train_util.save_sd_model_on_epoch_end_or_stepwise(
+                        #     args,
+                        #     False,
+                        #     accelerator,
+                        #     src_path,
+                        #     save_stable_diffusion_format,
+                        #     use_safetensors,
+                        #     save_dtype,
+                        #     epoch,
+                        #     num_train_epochs,
+                        #     global_step,
+                        #     accelerator.unwrap_model(text_encoder1),
+                        #     accelerator.unwrap_model(text_encoder2),
+                        #     unet,
+                        #     vae,
+                        #     logit_scale,
+                        #     ckpt_info,
+                        # )
+                    accelerator.save_state(output_dir= os.path.splitext(src_path)[0]+f"_{global_step}")
+
+                    accelerator.wait_for_everyone()
+
+
+
 
             current_loss = loss.detach().item()  # 平均なのでbatch sizeは関係ないはず
             if args.logging_dir is not None:
-                logs = {"loss": current_loss}
+                logs = {"loss": current_loss, "grad_norm": grad_norm.item() if 'grad_norm' in locals() else None}
                 if block_lrs is None:
                     train_util.append_lr_to_logs(logs, lr_scheduler, args.optimizer_type, including_unet=train_unet)
                 else:
@@ -838,7 +859,7 @@ def train(args):
                     global_step,
                     accelerator.unwrap_model(text_encoder1),
                     accelerator.unwrap_model(text_encoder2),
-                    accelerator.unwrap_model(unet),
+                    unet,
                     vae,
                     logit_scale,
                     ckpt_info,

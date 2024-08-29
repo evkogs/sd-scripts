@@ -488,6 +488,7 @@ def save_stable_diffusion_checkpoint(
     logit_scale,
     metadata,
     save_dtype=None,
+    accelerator=None,
 ):
     state_dict = {}
 
@@ -495,11 +496,12 @@ def save_stable_diffusion_checkpoint(
         for k, v in sd.items():
             key = prefix + k
             if save_dtype is not None:
-                v = v.detach().clone().to("cpu").to(save_dtype)
+                v = v.detach().clone().to("cpu").to(save_dtype) 
             state_dict[key] = v
 
     # Convert the UNet model
-    update_sd("model.diffusion_model.", unet.state_dict())
+    # update_sd("model.diffusion_model.", unet.state_dict())
+    update_sd("model.diffusion_model.", accelerator.get_state_dict(unet, unwrap=False))
 
     # Convert the text encoders
     update_sd("conditioner.embedders.0.transformer.", text_encoder1.state_dict())
@@ -543,7 +545,7 @@ def save_diffusers_checkpoint(
     diffusers_unet = UNet2DConditionModel(**DIFFUSERS_SDXL_UNET_CONFIG)
     if save_dtype is not None:
         diffusers_unet.to(save_dtype)
-    diffusers_unet.load_state_dict(du_unet_sd)
+    diffusers_unet.load_state_dict(du_unet_sd)      if du_unet_sd else None             
 
     # create pipeline to save
     if pretrained_model_name_or_path is None:
