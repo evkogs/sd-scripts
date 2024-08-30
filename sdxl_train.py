@@ -794,25 +794,25 @@ def train(args):
                 if args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0:
                     accelerator.wait_for_everyone()
                     src_path = src_stable_diffusion_ckpt if save_stable_diffusion_format else src_diffusers_model_path
-                        # sdxl_train_util.save_sd_model_on_epoch_end_or_stepwise(
-                        #     args,
-                        #     False,
-                        #     accelerator,
-                        #     src_path,
-                        #     save_stable_diffusion_format,
-                        #     use_safetensors,
-                        #     save_dtype,
-                        #     epoch,
-                        #     num_train_epochs,
-                        #     global_step,
-                        #     accelerator.unwrap_model(text_encoder1),
-                        #     accelerator.unwrap_model(text_encoder2),
-                        #     unet,
-                        #     vae,
-                        #     logit_scale,
-                        #     ckpt_info,
-                        # )
-                    accelerator.save_state(output_dir= os.path.splitext(src_path)[0]+f"_{global_step}")
+                    sdxl_train_util.save_sd_model_on_epoch_end_or_stepwise(
+                        args,
+                        False,
+                        accelerator,
+                        src_path,
+                        save_stable_diffusion_format,
+                        use_safetensors,
+                        save_dtype,
+                        epoch,
+                        num_train_epochs,
+                        global_step,
+                        accelerator.unwrap_model(text_encoder1),
+                        accelerator.unwrap_model(text_encoder2),
+                        unet,
+                        vae,
+                        logit_scale,
+                        ckpt_info,
+                    )
+                    accelerator.save_state(output_dir= os.path.splitext(args.output_dir)[0]+f"_{global_step}")
 
                     accelerator.wait_for_everyone()
 

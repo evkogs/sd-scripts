@@ -496,7 +496,7 @@ def save_stable_diffusion_checkpoint(
         for k, v in sd.items():
             key = prefix + k
             if save_dtype is not None:
-                v = v.detach().clone().to("cpu").to(save_dtype) 
+                v = v.detach().clone().to("cpu").to(save_dtype)
             state_dict[key] = v
 
     # Convert the UNet model
@@ -545,7 +545,7 @@ def save_diffusers_checkpoint(
     diffusers_unet = UNet2DConditionModel(**DIFFUSERS_SDXL_UNET_CONFIG)
     if save_dtype is not None:
         diffusers_unet.to(save_dtype)
-    diffusers_unet.load_state_dict(du_unet_sd)      if du_unet_sd else None             
+    diffusers_unet.load_state_dict(du_unet_sd)             
 
     # create pipeline to save
     if pretrained_model_name_or_path is None:
