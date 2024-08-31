@@ -8,3 +8,4 @@ build
 wandb
 venv*
 */*.sh
+*/*.ipynb
